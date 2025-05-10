@@ -1,0 +1,1274 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>API テストツール</title>
+    <style>
+      .api-container {
+        display: grid;
+        grid-template-columns: 15% 20% 35% 30%;
+        gap: 16px;
+        padding: 16px;
+        height: 100vh;
+        box-sizing: border-box;
+      }
+
+      @media (max-width: 1200px) {
+        .api-container {
+          grid-template-columns: 1fr 1fr 2fr 1fr;
+        }
+      }
+
+      .api-container > div {
+        overflow-y: auto;
+      }
+
+      .text-gray {
+        color: gray;
+      }
+
+      textarea,
+      input,
+      select {
+        width: 90%;
+        padding: 5px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+      }
+
+      button {
+        width: 30%;
+        padding: 10px;
+        background-color: #4caf50;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+
+      button:disabled {
+        background-color: #cccccc;
+        cursor: not-allowed;
+      }
+
+      .param-input.invalid {
+        background-color: #ffe6e6;
+      }
+
+      .param-input.valid {
+        background-color: #e6ffed;
+      }
+
+      .loading {
+        display: inline-block;
+        width: 20px;
+        height: 20px;
+        border: 3px solid rgba(255, 255, 255, 0.3);
+        border-radius: 50%;
+        border-top-color: #fff;
+        animation: spin 1s ease-in-out infinite;
+        margin-left: 10px;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      .response-status {
+        padding: 5px;
+        border-radius: 4px;
+        margin-bottom: 10px;
+        font-weight: bold;
+      }
+
+      .status-success {
+        background-color: #e6ffed;
+        color: #28a745;
+      }
+
+      .status-error {
+        background-color: #ffe6e6;
+        color: #dc3545;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="api-container">
+      <!-- 接続先 -->
+      <div>
+        <h2 class="font-bold mb-2">接続先</h2>
+        <form id="connectionForm">
+          <div class="mb-4">
+            <label for="protocol" class="block">プロトコル</label>
+            <select id="protocol">
+              <option value="http">http</option>
+              <option value="https">https</option>
+            </select>
+          </div>
+          <div class="mb-4">
+            <label for="host" class="block">ホスト</label>
+            <select id="host">
+              <option value="localhost">localhost</option>
+              <option value="example.com">example.com</option>
+              <option value="api.open-meteo.com">api.open-meteo.com</option>
+            </select>
+          </div>
+          <div class="mb-4">
+            <label for="port" class="block">ポート</label>
+            <!-- <input type="number" id="port" value="3000" min="1" max="65535" /> -->
+            <select id="port">
+              <option value="80" selected>80</option>
+              <option value="443">443</option>
+              <option value="3000">3000</option>
+            </select>
+          </div>
+          <div class="mb-4">
+            <label for="commonParams" class="block"
+              >共通パラメータ (JSON形式)</label
+            >
+            <textarea
+              id="commonParams"
+              placeholder='{"token": "your_auth_token"}'
+            ></textarea>
+          </div>
+          <div class="mb-4">
+            <label for="commonHeaders" class="block"
+              >共通ヘッダー (JSON形式)</label
+            >
+            <textarea
+              id="commonHeaders"
+              placeholder='{"Authorization": "Bearer token"}'
+            ></textarea>
+          </div>
+          <div class="mb-4">
+            <label for="contentType" class="block">リクエスト形式(POST時)</label>
+            <select id="contentType">
+              <option value="json">JSON</option>
+              <option value="form">フォームデータ</option>
+            </select>
+          </div>
+        </form>
+      </div>
+
+      <!-- API 一覧 -->
+      <div>
+        <h2 class="font-bold mb-2">API 一覧</h2>
+        <input id="filterText" value="" />
+        <div id="apiList" class="border rounded divide-y"></div>
+        <div style="margin-top: 10px">
+          <button id="addNewApiBtn" style="width: 90%">新しいAPIを追加</button>
+        </div>
+        <div style="margin-top: 10px">
+          <button id="getApiJsonBtn" style="width: 90%">APIリストをJSONで保存</button>
+        </div>
+        <div style="margin-top: 10px">
+          <button id="clearApiJsonBtn" style="width: 90%">ブラウザのAPIリストをクリア</button>
+        </div>
+      </div>
+
+      <!-- API 詳細 -->
+      <div id="apiDetail">
+        <h2 class="font-bold text-lg mb-1" id="apiName">(未選択)</h2>
+        <div class="text-sm text-gray-700 mb-1" id="apiDescription"></div>
+        <div class="text-sm text-gray-600 mb-2">
+          <strong>メソッド:</strong> <span id="apiMethod"></span> ／
+          <strong>パス:</strong> <span id="apiUrl"></span>
+        </div>
+
+        <h3 class="font-semibold mb-2">個別パラメータ</h3>
+        <div id="parameterInputs"></div>
+
+        <div id="sendContainer" style="margin-top: 16px; display: none">
+          <button id="sendRequestBtn" disabled>送信</button>
+          <span
+            id="loadingIndicator"
+            class="loading"
+            style="display: none"
+          ></span>
+        </div>
+      </div>
+
+      <!-- リクエストとレスポンス -->
+      <div style="display: flex; flex-direction: column; height: 100%">
+        <div style="flex: 1.5; overflow-y: auto">
+          <h2 class="font-bold mb-2">リクエスト</h2>
+          <pre
+            id="requestPreview"
+            class="w-full p-2 border rounded mb-4 h-full overflow-auto text-sm break-all whitespace-pre-wrap"
+          >
+（未送信）
+        </pre
+          >
+        </div>
+        <div style="flex: 2; overflow-y: auto">
+          <h2 class="font-bold mb-2">レスポンス</h2>
+          <div
+            id="responseStatus"
+            class="response-status"
+            style="display: none"
+          ></div>
+          <pre
+            id="response"
+            class="w-full p-2 border rounded h-full overflow-auto text-sm break-all whitespace-pre-wrap"
+          ></pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- 新しいAPI追加モーダル -->
+    <div
+      id="apiModal"
+      style="
+        display: none;
+        position: fixed;
+        z-index: 1;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        overflow: auto;
+        background-color: rgba(0, 0, 0, 0.4);
+      "
+    >
+      <div
+        style="
+          background-color: white;
+          margin: 10% auto;
+          padding: 20px;
+          border: 1px solid #888;
+          width: 60%;
+          max-width: 800px;
+        "
+      >
+        <span
+          style="float: right; cursor: pointer; font-size: 28px"
+          id="closeModal"
+          >&times;</span
+        >
+        <h2>新しいAPIを追加</h2>
+        <form id="newApiForm">
+          <div style="margin-bottom: 10px">
+            <label for="newApiName">API名:</label>
+            <input type="text" id="newApiName" required style="width: 100%" />
+          </div>
+          <div style="margin-bottom: 10px">
+            <label for="newApiMethod">メソッド:</label>
+            <select id="newApiMethod" style="width: 100%">
+              <option value="GET">GET</option>
+              <option value="POST">POST</option>
+              <option value="PUT">PUT</option>
+              <option value="DELETE">DELETE</option>
+              <option value="PATCH">PATCH</option>
+            </select>
+          </div>
+          <div style="margin-bottom: 10px">
+            <label for="newApiPath">パス:</label>
+            <input
+              type="text"
+              id="newApiPath"
+              required
+              style="width: 100%"
+              placeholder="/api/resource"
+            />
+          </div>
+          <div style="margin-bottom: 10px">
+            <label for="newApiDescription">説明:</label>
+            <textarea id="newApiDescription" style="width: 100%"></textarea>
+          </div>
+          <div style="margin-bottom: 10px">
+            <h3>パラメータ:</h3>
+            <div id="newApiParameters">
+              <!-- パラメータ入力フィールドがここに動的に追加される -->
+            </div>
+            <button
+              type="button"
+              id="addParameterBtn"
+              style="width: auto; background-color: #007bff"
+            >
+              パラメータを追加
+            </button>
+          </div>
+          <div style="text-align: right">
+            <button
+              type="submit"
+              style="width: auto; background-color: #4caf50"
+            >
+              保存
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <script>
+      const additionalApis = [
+      {
+          name: "ユーザー詳細取得",
+          method: "GET",
+          path: "/api/users/detail",
+          description: "ユーザーの詳細情報を取得します(表示確認用のサンプルAPI)。",
+          parameters: [
+            {
+              name: "userId",
+              label: "ユーザーID",
+              required: true,
+              pattern: "^[a-z0-9]{4,10}$",
+              minLength: 4,
+              maxLength: 10,
+              description: "英小文字と数字",
+            },
+          ],
+        },
+        {
+          name: "投稿作成",
+          method: "POST",
+          path: "/api/posts/create",
+          description: "新しい投稿を作成します(表示確認用のサンプルAPI)。",
+          parameters: [
+            {
+              name: "title",
+              label: "タイトル",
+              required: true,
+              pattern: ".+",
+              minLength: 1,
+              maxLength: 100,
+              description: "投稿のタイトル",
+            },
+            {
+              name: "content",
+              label: "内容",
+              required: true,
+              pattern: ".+",
+              minLength: 1,
+              maxLength: 1000,
+              description: "投稿の本文",
+            },
+          ],
+        },
+        {
+          name: "設定変更",
+          method: "POST",
+          path: "/api/settings/update",
+          description: "ユーザー設定を変更します(表示確認用のサンプルAPI)。",
+          parameters: [
+            {
+              name: "language",
+              label: "言語",
+              required: true,
+              type: "select",
+              options: [
+                { value: "en", label: "English" },
+                { value: "ja", label: "日本語" },
+              ],
+              description: "使用する言語",
+            },
+            {
+              name: "newsletter",
+              label: "ニュースレター購読",
+              type: "checkbox",
+              required: false,
+              description: "ニュースレターを購読するか",
+            },
+          ],
+        },
+        {
+          name: "画像設定更新",
+          method: "POST",
+          path: "/api/images/settings",
+          description: "画像の設定を更新します(表示確認用のサンプルAPI)。",
+          parameters: [
+            {
+              name: "resize",
+              label: "リサイズ",
+              type: "checkbox",
+              required: false,
+              description: "画像をリサイズするか",
+            },
+            {
+              name: "format",
+              label: "フォーマット",
+              type: "select",
+              options: [
+                { value: "jpg", label: "JPEG" },
+                { value: "png", label: "PNG" },
+                { value: "gif", label: "GIF" },
+              ],
+              required: true,
+              description: "画像のフォーマット",
+            },
+          ],
+        },
+        {
+            "name": "Open-Meteo(非公式のもの)",
+            "method": "GET",
+            "path": "/v1/forecast",
+            "description": "非営利プロジェクトのみ利用可能なトークンなども不要な天気API",
+            "parameters": [
+                {
+                    "name": "latitude",
+                    "label": "緯度",
+                    "description": "",
+                    "type": "text",
+                    "required": true,
+                    "pattern": "\\d+\\.\\d+",
+                    "value": "52.52"
+                },
+                {
+                    "name": "longitude",
+                    "label": "経度",
+                    "description": "",
+                    "type": "text",
+                    "required": true,
+                    "pattern": "\\d+\\.\\d+",
+                    "value": "13.41"
+                },
+                {
+                    "name": "hourly",
+                    "label": "hourly",
+                    "description": "",
+                    "type": "select",
+                    "required": true,
+                    "options": [
+                        {
+                            "value": "temperature_2m",
+                            "label": "temperature_2m"
+                        }
+                    ]
+                }
+            ]
+        },
+      ];
+
+      // ローカルストレージからAPIリストを取得するか、デフォルトのリストを使用
+      let apiListData = JSON.parse(localStorage.getItem("apiListData")) || [
+        ...additionalApis,
+      ];
+
+      const filterTextElement = document.getElementById('filterText');
+      const apiListElement = document.getElementById("apiList");
+      const apiNameElement = document.getElementById("apiName");
+      const apiDescriptionElement = document.getElementById("apiDescription");
+      const apiMethodElement = document.getElementById("apiMethod");
+      const apiUrlElement = document.getElementById("apiUrl");
+      const parameterInputsElement = document.getElementById("parameterInputs");
+      const sendContainer = document.getElementById("sendContainer");
+      const sendRequestBtn = document.getElementById("sendRequestBtn");
+      const requestPreviewElement = document.getElementById("requestPreview");
+      const responseElement = document.getElementById("response");
+      const responseStatusElement = document.getElementById("responseStatus");
+      const loadingIndicator = document.getElementById("loadingIndicator");
+
+      // 新しいAPI関連
+      const addNewApiBtn = document.getElementById("addNewApiBtn");
+      const apiModal = document.getElementById("apiModal");
+      const closeModal = document.getElementById("closeModal");
+      const newApiForm = document.getElementById("newApiForm");
+      const addParameterBtn = document.getElementById("addParameterBtn");
+      const newApiParameters = document.getElementById("newApiParameters");
+
+      // フィルターテキスト入力時に実行
+      filterTextElement.addEventListener('input', filterTextChange);
+      function filterTextChange() {
+        displayApiList(filterTextElement.value);
+      }
+
+      // APIリストを表示する関数
+      function displayApiList(filterText="") {
+        apiListElement.innerHTML = ""; // リストをクリア
+        apiListData.forEach((api, index) => {
+          // filterTextで制限し表示
+          if (filterText && !`${api.name} - ${api.path}`.toLowerCase().includes(filterText.toLowerCase())) {
+            return;
+          }
+          const apiItem = document.createElement("div");
+          apiItem.className = "p-2 cursor-pointer hover:bg-gray-100";
+          apiItem.textContent = `${api.name} - ${api.path}`;
+          apiItem.addEventListener("click", () => displayApiDetail(api));
+
+          // 削除ボタンを追加
+          const deleteBtn = document.createElement("button");
+          deleteBtn.innerHTML = "&#x2715;"; // ×印
+          deleteBtn.style.float = "right";
+          deleteBtn.style.backgroundColor = "#dc3545";
+          deleteBtn.style.color = "white";
+          deleteBtn.style.border = "none";
+          deleteBtn.style.borderRadius = "50%";
+          deleteBtn.style.width = "16px";
+          deleteBtn.style.height = "16px";
+          deleteBtn.style.padding = "0";
+          deleteBtn.style.fontSize = "10px";
+          deleteBtn.style.lineHeight = "1";
+          deleteBtn.style.display = "flex";
+          deleteBtn.style.alignItems = "center";
+          deleteBtn.style.justifyContent = "center";
+          deleteBtn.style.cursor = "pointer";
+          deleteBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            if (confirm(`${api.name}を削除しますか？`)) {
+              apiListData.splice(index, 1);
+              saveApiList();
+              displayApiList();
+            }
+          });
+
+          apiItem.appendChild(deleteBtn);
+          apiListElement.appendChild(apiItem);
+        });
+      }
+
+      // APIリストをローカルストレージに保存
+      function saveApiList() {
+        localStorage.setItem("apiListData", JSON.stringify(apiListData));
+      }
+
+      // API詳細を表示する関数
+      function displayApiDetail(api) {
+        apiNameElement.textContent = api.name || "(未選択)";
+        apiDescriptionElement.textContent = api.description || "";
+        apiMethodElement.textContent = api.method || "";
+        apiUrlElement.textContent = api.path || "";
+
+        parameterInputsElement.innerHTML = "";
+
+        let formValid = true;
+
+        if (api.parameters && api.parameters.length > 0) {
+          api.parameters.forEach((param) => {
+            const paramDiv = document.createElement("div");
+            paramDiv.className = "mb-4";
+
+            const label = document.createElement("label");
+            if (param.label) {
+              label.textContent = `${param.label}(${param.name})`
+            } else {
+              label.textContent = param.name
+            }
+            label.textContent += param.required ? "<必須>" : "";
+            label.className = "block font-semibold";
+            paramDiv.appendChild(label);
+
+            let inputElement;
+
+            // チェックボックスの処理
+            if (param.type === "checkbox") {
+              inputElement = document.createElement("input");
+              inputElement.type = "checkbox";
+              inputElement.id = param.name;
+              inputElement.className = "param-input";
+            }
+            // リスト選択の処理（<select>タグ）
+            else if (param.type === "select") {
+              inputElement = document.createElement("select");
+              inputElement.id = param.name;
+              inputElement.className = "param-input";
+
+              param.options.forEach((option) => {
+                const optionElement = document.createElement("option");
+                optionElement.value = option.value;
+                optionElement.textContent = option.label;
+                inputElement.appendChild(optionElement);
+              });
+            }
+            // テキスト入力の処理
+            else {
+              inputElement = document.createElement("input");
+              inputElement.type = "text";
+              inputElement.id = param.name;
+              inputElement.value = param.value || "";
+              inputElement.dataset.pattern = param.pattern || "";
+              inputElement.dataset.minLength = param.minLength || "";
+              inputElement.dataset.maxLength = param.maxLength || "";
+              inputElement.dataset.required = param.required;
+              inputElement.className = "param-input";
+            }
+
+            const description1 = document.createElement("div");
+            description1.className = "text-xs text-gray mb-1";
+            description1.textContent = param.description || "説明なし";
+            const description2 = document.createElement("div");
+            description2.className = "text-xs text-gray mb-1";
+            description2.textContent = "";
+            if (param.pattern || param.minLength || param.maxLength) {
+              description2.textContent += `条件: ${
+                param.minLength ? `最小${param.minLength}文字, ` : ""
+              }${param.maxLength ? `最大${param.maxLength}文字, ` : ""}${
+                param.pattern ? `パターン: ${param.pattern}` : ""
+              }`;
+            }
+
+            inputElement.addEventListener("input", validateForm);
+
+            paramDiv.appendChild(description1);
+            paramDiv.appendChild(description2);
+            paramDiv.appendChild(inputElement);
+            parameterInputsElement.appendChild(paramDiv);
+            inputElement.dispatchEvent(new Event("input"));
+          });
+        } else {
+          const noParamsMsg = document.createElement("div");
+          noParamsMsg.textContent = "このAPIにはパラメータがありません。";
+          parameterInputsElement.appendChild(noParamsMsg);
+        }
+
+        sendContainer.style.display = "block";
+
+        // 初期状態では送信ボタンを無効に設定
+        validateForm();
+
+        // 送信ボタンのクリックイベント設定
+        sendRequestBtn.onclick = () => sendRequest(api);
+
+        // フォームの検証を行う関数
+        function validateForm() {
+          formValid = true;
+
+          if (api.parameters) {
+            api.parameters.forEach((param) => {
+              const inputElement = document.getElementById(param.name);
+              if (inputElement && param.required && param.type !== "checkbox") {
+                const val = inputElement.value;
+                const pat = inputElement.dataset.pattern;
+                const min = parseInt(inputElement.dataset.minLength || "0");
+                const max = parseInt(inputElement.dataset.maxLength || "10000");
+                const re = pat ? new RegExp(pat) : null;
+
+                const isValid =
+                  val.length > 0 &&
+                  val.length >= min &&
+                  val.length <= max &&
+                  (!re || re.test(val));
+
+                inputElement.classList.toggle("valid", isValid);
+                inputElement.classList.toggle("invalid", !isValid);
+
+                if (!isValid) formValid = false;
+              }
+            });
+          }
+
+          sendRequestBtn.disabled = !formValid;
+        }
+      }
+
+      // リクエスト送信関数
+      async function sendRequest(api) {
+        const params = {};
+        const protocol = document.getElementById("protocol").value;
+        const host = document.getElementById("host").value;
+        let port = document.getElementById("port").value;
+        const contentType = document.getElementById("contentType").value;
+
+        // 補正
+        switch (protocol) {
+          // httpになっていて443の場合は80にする
+          case 'http':
+            if (port == '443') {
+              port = '80';
+              document.getElementById("port").value = port;
+            }
+            break;
+          case 'https':
+            port = '443';
+            document.getElementById("port").value = port;
+            break;
+        }
+        // if (protocol == 'https') {
+        //   port = '443';
+        //   document.getElementById("port").value = port;
+        // } else
+        // // 共通パラメータの取得
+        let commonParams = {};
+        try {
+          const commonParamsText = document
+            .getElementById("commonParams")
+            .value.trim();
+          if (commonParamsText) {
+            commonParams = JSON.parse(commonParamsText);
+          }
+        } catch (e) {
+          alert("共通パラメータのJSON形式が不正です: " + e.message);
+          return;
+        }
+
+        // 共通ヘッダーの取得
+        let headers = {};
+        try {
+          const commonHeadersText = document
+            .getElementById("commonHeaders")
+            .value.trim();
+          if (commonHeadersText) {
+            const customHeaders = JSON.parse(commonHeadersText);
+            headers = { ...headers, ...customHeaders };
+          }
+        } catch (e) {
+          alert("共通ヘッダーのJSON形式が不正です: " + e.message);
+          return;
+        }
+
+        // コンテンツタイプに応じてヘッダーを設定
+        if (api.method !== "GET") {
+          if (contentType === "json") {
+            headers["Content-Type"] = "application/json";
+          } else if (contentType === "form") {
+            headers["Content-Type"] = "application/x-www-form-urlencoded";
+          }
+        }
+
+        // 個別パラメータの取得
+        if (api.parameters) {
+          api.parameters.forEach((param) => {
+            const inputElement = document.getElementById(param.name);
+
+            if (inputElement) {
+              // チェックボックスの処理
+              if (param.type === "checkbox") {
+                params[param.name] = inputElement.checked;
+              }
+              // リスト選択の処理（<select>タグ）
+              else if (inputElement.tagName === "SELECT") {
+                params[param.name] = inputElement.value;
+              }
+              // テキスト入力の処理
+              else {
+                params[param.name] = inputElement.value;
+              }
+            }
+          });
+        }
+
+        // 全パラメータをマージ
+        const allParams = { ...commonParams, ...params };
+
+        // クエリパラメータの構築 (GETリクエスト用)
+        let url = `${protocol}://${host}${port ? ":" + port : ""}${api.path}`;
+
+        if (api.method === "GET") {
+          const queryParams = new URLSearchParams();
+          for (const [key, value] of Object.entries(allParams)) {
+            queryParams.append(key, value);
+          }
+          const queryString = queryParams.toString();
+          if (queryString) {
+            url = `${url}?${queryString}`;
+          }
+        }
+
+        const requestOptions = {
+          method: api.method,
+          headers: headers,
+        };
+
+        // GETリクエスト以外はボディを追加
+        if (api.method !== "GET") {
+          if (contentType === "json") {
+            // JSON形式でボディを設定
+            requestOptions.body = JSON.stringify(allParams);
+          } else if (contentType === "form") {
+            // フォームデータ形式でボディを設定
+            const formData = new URLSearchParams();
+            for (const [key, value] of Object.entries(allParams)) {
+              formData.append(
+                key,
+                typeof value === "object" ? JSON.stringify(value) : value
+              );
+            }
+            requestOptions.body = formData.toString();
+          }
+        }
+
+        // リクエストプレビューの更新
+        const requestPreview = {
+          method: api.method,
+          url: url,
+          headers: headers,
+          contentType:
+            api.method !== "GET"
+              ? contentType === "json"
+                ? "application/json"
+                : "application/x-www-form-urlencoded"
+              : undefined,
+          body: api.method !== "GET" ? allParams : undefined,
+          bodyFormat: api.method !== "GET" ? contentType : undefined,
+        };
+
+        requestPreviewElement.textContent = JSON.stringify(
+          requestPreview,
+          null,
+          2
+        );
+
+        // UI更新
+        sendRequestBtn.disabled = true;
+        loadingIndicator.style.display = "inline-block";
+        responseElement.textContent = "リクエスト送信中...";
+        responseStatusElement.style.display = "none";
+
+        try {
+          const response = await fetch(url, requestOptions);
+          const responseStatus = response.status;
+
+          // レスポンスヘッダーを収集
+          const responseHeaders = {};
+          response.headers.forEach((value, key) => {
+            responseHeaders[key] = value;
+          });
+
+          // レスポンスの取得
+          let responseData;
+          const contentType = response.headers.get("content-type");
+          if (contentType && contentType.includes("application/json")) {
+            try {
+              responseData = await response.json();
+            } catch (e) {
+              responseData = await response.text();
+            }
+          } else {
+            responseData = await response.text();
+          }
+
+          // レスポンス表示
+          responseStatusElement.style.display = "block";
+          responseStatusElement.textContent = `Status: ${responseStatus} ${response.statusText}`;
+          responseStatusElement.className = `response-status ${
+            responseStatus >= 200 && responseStatus < 300
+              ? "status-success"
+              : "status-error"
+          }`;
+
+          // レスポンスヘッダーとボディを表示
+          const fullResponse = {
+            status: responseStatus,
+            statusText: response.statusText,
+            headers: responseHeaders,
+            body: responseData,
+          };
+
+          const responseOutput = JSON.stringify(fullResponse, null, 2);
+          responseElement.textContent = responseOutput;
+        } catch (error) {
+          responseStatusElement.style.display = "block";
+          responseStatusElement.textContent = `Error: ${error.message}`;
+          responseStatusElement.className = "response-status status-error";
+          responseElement.textContent = `リクエスト中にエラーが発生しました: ${error.message}`;
+        } finally {
+          sendRequestBtn.disabled = false;
+          loadingIndicator.style.display = "none";
+        }
+      }
+
+      // 新しいAPIの追加モーダル表示
+      addNewApiBtn.addEventListener("click", () => {
+        apiModal.style.display = "block";
+        newApiParameters.innerHTML = ""; // パラメータリストをクリア
+      });
+
+      // モーダルを閉じる
+      closeModal.addEventListener("click", () => {
+        apiModal.style.display = "none";
+      });
+
+      // モーダル外クリックで閉じる
+      window.addEventListener("click", (event) => {
+        if (event.target === apiModal) {
+          apiModal.style.display = "none";
+        }
+      });
+
+      // パラメータ追加ボタン
+      addParameterBtn.addEventListener("click", () => {
+        addParameterField();
+      });
+
+      // パラメータフィールドを追加
+      function addParameterField(param = {}) {
+        const paramIndex = newApiParameters.children.length;
+        const paramContainer = document.createElement("div");
+        paramContainer.className = "parameter-container";
+        paramContainer.style.border = "1px solid #ddd";
+        paramContainer.style.padding = "10px";
+        paramContainer.style.marginBottom = "10px";
+        paramContainer.style.position = "relative";
+
+        // 削除ボタン
+        const removeBtn = document.createElement("button");
+        removeBtn.textContent = "✕";
+        removeBtn.style.position = "absolute";
+        removeBtn.style.right = "5px";
+        removeBtn.style.top = "5px";
+        removeBtn.style.padding = "2px 6px";
+        removeBtn.style.backgroundColor = "#dc3545";
+        removeBtn.style.color = "white";
+        removeBtn.style.border = "none";
+        removeBtn.style.borderRadius = "3px";
+        removeBtn.style.cursor = "pointer";
+        removeBtn.addEventListener("click", () => {
+          paramContainer.remove();
+        });
+        paramContainer.appendChild(removeBtn);
+
+        // フィールド作成関数
+        function createField(id, label, value = "", width = "100%") {
+          const div = document.createElement("div");
+          div.style.marginBottom = "8px";
+
+          const fieldLabel = document.createElement("label");
+          fieldLabel.textContent = label;
+          fieldLabel.setAttribute("for", id + paramIndex);
+          fieldLabel.style.display = "block";
+          fieldLabel.style.marginBottom = "3px";
+
+          const input = document.createElement("input");
+          input.type = "text";
+          input.id = id + paramIndex;
+          input.name = id + paramIndex;
+          input.value = value;
+          input.style.width = width;
+
+          div.appendChild(fieldLabel);
+          div.appendChild(input);
+          return div;
+        }
+
+        // 入力フィールド
+        paramContainer.appendChild(
+          createField("paramName", "パラメータ名:", param.name || "")
+        );
+        paramContainer.appendChild(
+          createField("paramLabel", "表示名:", param.label || "")
+        );
+
+        // 説明フィールド
+        const descDiv = document.createElement("div");
+        descDiv.style.marginBottom = "8px";
+
+        const descLabel = document.createElement("label");
+        descLabel.textContent = "説明:";
+        descLabel.setAttribute("for", "paramDesc" + paramIndex);
+        descLabel.style.display = "block";
+        descLabel.style.marginBottom = "3px";
+
+        const descTextarea = document.createElement("textarea");
+        descTextarea.id = "paramDesc" + paramIndex;
+        descTextarea.name = "paramDesc" + paramIndex;
+        descTextarea.value = param.description || "";
+        descTextarea.style.width = "100%";
+        descTextarea.style.height = "60px";
+
+        descDiv.appendChild(descLabel);
+        descDiv.appendChild(descTextarea);
+        paramContainer.appendChild(descDiv);
+
+        // タイプ選択
+        const typeDiv = document.createElement("div");
+        typeDiv.style.marginBottom = "8px";
+
+        const typeLabel = document.createElement("label");
+        typeLabel.textContent = "タイプ:";
+        typeLabel.setAttribute("for", "paramType" + paramIndex);
+        typeLabel.style.display = "block";
+        typeLabel.style.marginBottom = "3px";
+
+        const typeSelect = document.createElement("select");
+        typeSelect.id = "paramType" + paramIndex;
+        typeSelect.name = "paramType" + paramIndex;
+        typeSelect.style.width = "100%";
+
+        const types = [
+          { value: "text", label: "テキスト" },
+          { value: "checkbox", label: "チェックボックス" },
+          { value: "select", label: "選択リスト" },
+        ];
+
+        types.forEach((type) => {
+          const option = document.createElement("option");
+          option.value = type.value;
+          option.textContent = type.label;
+          if (param.type === type.value) {
+            option.selected = true;
+          }
+          typeSelect.appendChild(option);
+        });
+
+        // セレクトオプション用のコンテナ
+        const optionsContainer = document.createElement("div");
+        optionsContainer.id = "options" + paramIndex;
+        optionsContainer.style.marginTop = "10px";
+        optionsContainer.style.display =
+          param.type === "select" ? "block" : "none";
+
+        // オプション追加ボタン
+        const addOptionBtn = document.createElement("button");
+        addOptionBtn.textContent = "オプション追加";
+        addOptionBtn.type = "button";
+        addOptionBtn.style.backgroundColor = "#007bff";
+        addOptionBtn.style.color = "white";
+        addOptionBtn.style.padding = "5px 10px";
+        addOptionBtn.style.border = "none";
+        addOptionBtn.style.borderRadius = "3px";
+        addOptionBtn.style.cursor = "pointer";
+
+        // オプション追加処理
+        addOptionBtn.addEventListener("click", () => {
+          addOptionField(optionsContainer, {});
+        });
+
+        optionsContainer.appendChild(addOptionBtn);
+
+        // タイプ変更時の処理
+        typeSelect.addEventListener("change", () => {
+          optionsContainer.style.display =
+            typeSelect.value === "select" ? "block" : "none";
+        });
+
+        typeDiv.appendChild(typeLabel);
+        typeDiv.appendChild(typeSelect);
+        paramContainer.appendChild(typeDiv);
+        paramContainer.appendChild(optionsContainer);
+
+        // もしセレクトタイプで既存のオプションがあれば追加
+        if (param.type === "select" && param.options) {
+          param.options.forEach((option) => {
+            addOptionField(optionsContainer, option);
+          });
+        }
+
+        // バリデーション関連
+        const validationDiv = document.createElement("div");
+        validationDiv.style.display = "flex";
+        validationDiv.style.flexWrap = "wrap";
+        validationDiv.style.gap = "10px";
+        validationDiv.style.marginBottom = "8px";
+
+        // 必須チェックボックス
+        const requiredDiv = document.createElement("div");
+        requiredDiv.style.display = "flex";
+        requiredDiv.style.alignItems = "center";
+        requiredDiv.style.marginRight = "10px";
+
+        const requiredCheck = document.createElement("input");
+        requiredCheck.type = "checkbox";
+        requiredCheck.id = "paramRequired" + paramIndex;
+        requiredCheck.name = "paramRequired" + paramIndex;
+        requiredCheck.checked = param.required || false;
+
+        const requiredLabel = document.createElement("label");
+        requiredLabel.textContent = "必須";
+        requiredLabel.setAttribute("for", "paramRequired" + paramIndex);
+        requiredLabel.style.marginLeft = "5px";
+
+        requiredDiv.appendChild(requiredCheck);
+        requiredDiv.appendChild(requiredLabel);
+
+        // 最小長さ
+        const minLengthDiv = document.createElement("div");
+        minLengthDiv.style.display = "flex";
+        minLengthDiv.style.alignItems = "center";
+
+        const minLengthLabel = document.createElement("label");
+        minLengthLabel.textContent = "最小長:";
+        minLengthLabel.setAttribute("for", "paramMinLength" + paramIndex);
+
+        const minLengthInput = document.createElement("input");
+        minLengthInput.type = "number";
+        minLengthInput.id = "paramMinLength" + paramIndex;
+        minLengthInput.name = "paramMinLength" + paramIndex;
+        minLengthInput.value = param.minLength || "";
+        minLengthInput.style.width = "60px";
+        minLengthInput.style.marginLeft = "5px";
+
+        minLengthDiv.appendChild(minLengthLabel);
+        minLengthDiv.appendChild(minLengthInput);
+
+        // 最大長さ
+        const maxLengthDiv = document.createElement("div");
+        maxLengthDiv.style.display = "flex";
+        maxLengthDiv.style.alignItems = "center";
+
+        const maxLengthLabel = document.createElement("label");
+        maxLengthLabel.textContent = "最大長:";
+        maxLengthLabel.setAttribute("for", "paramMaxLength" + paramIndex);
+
+        const maxLengthInput = document.createElement("input");
+        maxLengthInput.type = "number";
+        maxLengthInput.id = "paramMaxLength" + paramIndex;
+        maxLengthInput.name = "paramMaxLength" + paramIndex;
+        maxLengthInput.value = param.maxLength || "";
+        maxLengthInput.style.width = "60px";
+        maxLengthInput.style.marginLeft = "5px";
+
+        maxLengthDiv.appendChild(maxLengthLabel);
+        maxLengthDiv.appendChild(maxLengthInput);
+
+        validationDiv.appendChild(requiredDiv);
+        validationDiv.appendChild(minLengthDiv);
+        validationDiv.appendChild(maxLengthDiv);
+
+        // パターン（正規表現）
+        const patternDiv = document.createElement("div");
+        patternDiv.style.marginBottom = "8px";
+
+        const patternLabel = document.createElement("label");
+        patternLabel.textContent = "パターン（正規表現）:";
+        patternLabel.setAttribute("for", "paramPattern" + paramIndex);
+        patternLabel.style.display = "block";
+        patternLabel.style.marginBottom = "3px";
+
+        const patternInput = document.createElement("input");
+        patternInput.type = "text";
+        patternInput.id = "paramPattern" + paramIndex;
+        patternInput.name = "paramPattern" + paramIndex;
+        patternInput.value = param.pattern || "";
+        patternInput.style.width = "100%";
+
+        patternDiv.appendChild(patternLabel);
+        patternDiv.appendChild(patternInput);
+
+        paramContainer.appendChild(validationDiv);
+        paramContainer.appendChild(patternDiv);
+
+        newApiParameters.appendChild(paramContainer);
+      }
+
+      // セレクトボックスのオプションフィールド追加
+      function addOptionField(container, option = {}) {
+        const optionDiv = document.createElement("div");
+        optionDiv.style.display = "flex";
+        optionDiv.style.marginBottom = "5px";
+        optionDiv.style.alignItems = "center";
+
+        const valueInput = document.createElement("input");
+        valueInput.type = "text";
+        valueInput.placeholder = "値";
+        valueInput.value = option.value || "";
+        valueInput.style.width = "40%";
+        valueInput.style.marginRight = "5px";
+
+        const labelInput = document.createElement("input");
+        labelInput.type = "text";
+        labelInput.placeholder = "表示名";
+        labelInput.value = option.label || "";
+        labelInput.style.width = "40%";
+
+        const removeBtn = document.createElement("button");
+        removeBtn.textContent = "✕";
+        removeBtn.type = "button";
+        removeBtn.style.marginLeft = "5px";
+        removeBtn.style.backgroundColor = "#dc3545";
+        removeBtn.style.color = "white";
+        removeBtn.style.border = "none";
+        removeBtn.style.borderRadius = "3px";
+        removeBtn.style.cursor = "pointer";
+
+        removeBtn.addEventListener("click", () => {
+          optionDiv.remove();
+        });
+
+        optionDiv.appendChild(valueInput);
+        optionDiv.appendChild(labelInput);
+        optionDiv.appendChild(removeBtn);
+
+        // 既存のボタンの前に挿入（最後に挿入する）
+        const addButton = container.querySelector("button");
+        container.insertBefore(optionDiv, addButton);
+      }
+
+      // 新しいAPIの保存
+      newApiForm.addEventListener("submit", function (e) {
+        e.preventDefault();
+
+        const newApi = {
+          name: document.getElementById("newApiName").value,
+          method: document.getElementById("newApiMethod").value,
+          path: document.getElementById("newApiPath").value,
+          description: document.getElementById("newApiDescription").value,
+          parameters: [],
+        };
+
+        // パラメータの取得
+        const paramContainers = newApiParameters.querySelectorAll(
+          ".parameter-container"
+        );
+        paramContainers.forEach((container, index) => {
+          const paramName = container.querySelector(`#paramName${index}`).value;
+          const paramLabel = container.querySelector(
+            `#paramLabel${index}`
+          ).value;
+          const paramDesc = container.querySelector(`#paramDesc${index}`).value;
+          const paramType = container.querySelector(`#paramType${index}`).value;
+          const paramRequired = container.querySelector(
+            `#paramRequired${index}`
+          ).checked;
+          const paramMinLength = container.querySelector(
+            `#paramMinLength${index}`
+          ).value;
+          const paramMaxLength = container.querySelector(
+            `#paramMaxLength${index}`
+          ).value;
+          const paramPattern = container.querySelector(
+            `#paramPattern${index}`
+          ).value;
+
+          const param = {
+            name: paramName,
+            label: paramLabel || paramName,
+            description: paramDesc,
+            type: paramType,
+            required: paramRequired,
+          };
+
+          if (paramMinLength) param.minLength = parseInt(paramMinLength);
+          if (paramMaxLength) param.maxLength = parseInt(paramMaxLength);
+          if (paramPattern) param.pattern = paramPattern;
+
+          // selectタイプの場合はオプションを追加
+          if (paramType === "select") {
+            param.options = [];
+            const optionsContainer = container.querySelector(
+              `#options${index}`
+            );
+            const optionDivs = optionsContainer.querySelectorAll("div");
+
+            optionDivs.forEach((optionDiv) => {
+              const inputs = optionDiv.querySelectorAll("input");
+              if (inputs.length >= 2) {
+                param.options.push({
+                  value: inputs[0].value,
+                  label: inputs[1].value || inputs[0].value,
+                });
+              }
+            });
+          }
+
+          newApi.parameters.push(param);
+        });
+
+        // APIリストに追加
+        apiListData.push(newApi);
+        saveApiList();
+        displayApiList();
+
+        // モーダルを閉じる
+        apiModal.style.display = "none";
+      });
+
+      // JSONとして保存ボタン
+      getApiJsonBtn.addEventListener("click", () => {
+        navigator.clipboard.writeText(JSON.stringify(apiListData)).then(e => {
+          alert('コピーできました');
+        });
+      });
+
+      // JSONとして保存ボタン
+      clearApiJsonBtn.addEventListener("click", () => {
+        localStorage.clear();
+        alert('ブラウザに保存されたAPIリストをクリアしました');
+      });
+
+      // 初期化
+      displayApiList();
+    </script>
+  </body>
+</html>
