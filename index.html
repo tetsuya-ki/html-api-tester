@@ -150,6 +150,13 @@
               <option value="form">フォームデータ</option>
             </select>
           </div>
+          <div class="mb-4">
+            <label for="requestType" class="block">リクエスト形式</label>
+            <select id="requestType">
+              <option value="form">フォームデータ</option>
+              <option value="fetch">fetch(CORS制限あり)</option>
+            </select>
+          </div>
         </form>
       </div>
 
@@ -653,6 +660,113 @@
         }
       }
 
+      function addFormFields(form, obj, prefix = '') {
+            Object.entries(obj).forEach(([key, value]) => {
+                const fieldName = prefix ? `${prefix}[${key}]` : key;
+                if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+                    // ネストしたオブジェクトの場合
+                    addFormFields(form, value, fieldName);
+                } else {
+                    // プリミティブ値または配列の場合
+                    const input = document.createElement('input');
+                    input.type = 'hidden';
+                    input.name = fieldName;
+                    input.value = Array.isArray(value) ? JSON.stringify(value) : String(value);
+                    form.appendChild(input);
+                }
+            });
+        }
+
+      function sendRequestViaForm(url, queryParams, headers, requestOptions) {
+        const method = apiMethodElement.textContent;
+        console.log(queryParams);
+        console.log(url);
+        if (headers) {
+          headers = {"Content-Type": "application/x-www-form-urlencoded"};
+        }
+        const contentType = headers["Content-Type"];
+        let requestBody = requestOptions.body;
+        if (!requestBody) {
+          requestBody = queryParams;
+        }
+
+        // フォームを動的に作成
+        const form = document.createElement('form');
+        form.method = method;
+        form.action = url;
+        form.target = '_blank'; // 新しいタブで開く
+        form.style.display = 'none';
+
+        // POSTなどでボディがある場合の処理
+        // if (method !== 'GET' && requestBody) {
+        if (requestBody) {
+            if (contentType === 'application/json') {
+                // JSONの場合、個別のフィールドに分解してフォームフィールドとして送信
+                try {
+                    const jsonData = JSON.parse(requestBody);
+                    addFormFields(form, jsonData);
+                } catch (e) {
+                    alert('JSONフォーマットが正しくありません: ' + e.message);
+                    return;
+                }
+            } else if (contentType === 'application/x-www-form-urlencoded') {
+                // URLエンコード形式の場合
+                if (requestBody.includes('=')) {
+                    // key=value形式の場合
+                    const pairs = requestBody.split('&');
+                    pairs.forEach(pair => {
+                        const [key, value] = pair.split('=');
+                        if (key) {
+                            const input = document.createElement('input');
+                            input.type = 'hidden';
+                            input.name = decodeURIComponent(key);
+                            input.value = decodeURIComponent(value || '');
+                            form.appendChild(input);
+                        }
+                    });
+                } else {
+                    // JSONの場合は平坦化して送信
+                    try {
+                        const jsonData = JSON.parse(requestBody);
+                        addFormFields(form, jsonData);
+                    } catch (e) {
+                        // JSONでない場合はそのまま送信
+                        const input = document.createElement('input');
+                        input.type = 'hidden';
+                        input.name = 'data';
+                        input.value = requestBody;
+                        form.appendChild(input);
+                    }
+                }
+            }
+        }
+
+        // ヘッダー情報をフォームに追加（参考用）
+        if (Object.keys(headers).length > 0) {
+            const headerInput = document.createElement('input');
+            headerInput.type = 'hidden';
+            headerInput.name = '_headers';
+            headerInput.value = JSON.stringify(headers);
+            form.appendChild(headerInput);
+        }
+
+        // Content-Type情報を追加
+        if (contentType !== 'application/x-www-form-urlencoded') {
+            form.enctype = contentType;
+        }
+
+        document.body.appendChild(form);
+        console.log(form);
+        console.log(form.action);
+        form.submit();
+        document.body.removeChild(form);
+
+        // 成功メッセージ
+        // setTimeout(() => {
+        //     alert('リクエストを新しいタブで送信しました！\n\n注意: フォーム送信では一部のHTTPメソッド（PUT、DELETE等）やカスタムヘッダーが制限される場合があります。');
+        // }, 100);
+      }
+
       // リクエスト送信関数
       async function sendRequest(api) {
         const params = {};
@@ -660,26 +774,23 @@
         const host = document.getElementById("host").value;
         let port = document.getElementById("port").value;
         const contentType = document.getElementById("contentType").value;
+        const requestType = document.getElementById("requestType").value;
 
         // 補正
         switch (protocol) {
-          // httpになっていて443の場合は80にする
+          // httpになっていて443の場合やhttpsの場合は空文字にする
           case 'http':
             if (port == '443') {
-              port = '80';
+              port = '';
               document.getElementById("port").value = port;
             }
             break;
           case 'https':
-            port = '443';
+            port = '';
             document.getElementById("port").value = port;
             break;
         }
-        // if (protocol == 'https') {
-        //   port = '443';
-        //   document.getElementById("port").value = port;
-        // } else
-        // // 共通パラメータの取得
+        // 共通パラメータの取得
         let commonParams = {};
         try {
           const commonParamsText = document
@@ -716,6 +827,7 @@
             headers["Content-Type"] = "application/x-www-form-urlencoded";
           }
         }
+        const requestHeaders = headers;
 
         // 個別パラメータの取得
         if (api.parameters) {
@@ -744,13 +856,14 @@
 
         // クエリパラメータの構築 (GETリクエスト用)
         let url = `${protocol}://${host}${port ? ":" + port : ""}${api.path}`;
+        let queryString = "";
 
         if (api.method === "GET") {
           const queryParams = new URLSearchParams();
           for (const [key, value] of Object.entries(allParams)) {
             queryParams.append(key, value);
           }
-          const queryString = queryParams.toString();
+          queryString = queryParams.toString();
           if (queryString) {
             url = `${url}?${queryString}`;
           }
@@ -758,7 +871,7 @@
 
         const requestOptions = {
           method: api.method,
-          headers: headers,
+          headers: requestHeaders,
         };
 
         // GETリクエスト以外はボディを追加
@@ -783,7 +896,7 @@
         const requestPreview = {
           method: api.method,
           url: url,
-          headers: headers,
+          headers: requestHeaders,
           contentType:
             api.method !== "GET"
               ? contentType === "json"
@@ -806,9 +919,17 @@
         responseElement.textContent = "リクエスト送信中...";
         responseStatusElement.style.display = "none";
 
+        let response,responseStatus;
         try {
-          const response = await fetch(url, requestOptions);
-          const responseStatus = response.status;
+          switch (requestType) {
+            case 'form':
+              sendRequestViaForm(url, queryString, requestHeaders, requestOptions);
+              break;
+            case 'fetch':
+              response = await fetch(url, requestOptions);
+              responseStatus = response.status;
+              break;
+          }
 
           // レスポンスヘッダーを収集
           const responseHeaders = {};
